@@ -1,0 +1,63 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  # Box configuration
+  config.vm.box = "ubuntu/focal64"
+  config.vm.box_check_update = false
+
+  # Increase boot timeout to 10 minutes
+  config.vm.boot_timeout = 600
+
+  # Private network
+  config.vm.network "private_network", ip: "192.168.56.26"
+
+  # Public network (bridged)
+  config.vm.network "public_network"
+
+  # Synced folders
+  config.vm.synced_folder "../data", "/vagrant_data", create: true
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  # VirtualBox provider settings
+  config.vm.provider "virtualbox" do |vb|
+    vb.memory = "2048"
+    vb.cpus = 4
+  end
+
+  # Provisioning script
+  config.vm.provision "shell", inline: <<-SHELL
+    # Update system packages
+    apt-get update
+    apt-get upgrade -y
+
+    # Install Apache HTTP Server and dependencies
+    apt-get install -y apache2 wget unzip git curl
+
+    # Create a default homepage
+    echo "<h1>Welcome to Ubuntu Server</h1>" > /var/www/html/index.html
+    echo "<p>Apache is running on this server</p>" >> /var/www/html/index.html
+    echo "<p>Hostname: $(hostname)</p>" >> /var/www/html/index.html
+    echo "<p>IP Address: $(hostname -I)</p>" >> /var/www/html/index.html
+
+    # Enable and start Apache
+    systemctl start apache2
+    systemctl enable apache2
+
+    # Create DevOps directory
+    mkdir -p /opt/devopsdir
+
+    # Capture system information
+    free -m >> /opt/devopsdir/memory.txt
+    df -h >> /opt/devopsdir/disk.txt
+
+    # Log setup completion
+    echo "========================================" >> /opt/devopsdir/setup.log
+    echo "Apache Setup Completed:" >> /opt/devopsdir/setup.log
+    date >> /opt/devopsdir/setup.log
+    systemctl status apache2 >> /opt/devopsdir/setup.log
+    echo "========================================" >> /opt/devopsdir/setup.log
+  SHELL
+
+end
+
