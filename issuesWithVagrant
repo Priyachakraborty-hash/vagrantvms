@@ -1,0 +1,84 @@
+# Vagrant Up Hang on Windows — Troubleshooting
+
+2026-09-29
+
+## Problem
+
+`vagrant up` in `C:\DevOps\BashScripts` (Git Bash on Windows, VirtualBox provider) would not start the `scriptbox` VM. The symptoms got worse as we retried:
+
+- `vagrant up` printed nothing, then sat with a blank cursor.
+- `vagrant status` also hung, even though `vagrant --version` answered instantly (Vagrant 2.4.9).
+- Later runs froze at the same line every time: `scriptbox: Setting the name of the VM: BashScripts_scriptbox_...`
+- New commands failed with a lock error: *"An action 'up' was attempted on the machine 'scriptbox', but another process is already executing an action on the machine."*
+- `vagrant ssh scriptbox` failed with *"VM must be running to open SSH connection."*
+
+## Root cause
+
+VirtualBox was overloaded and holding stale state from earlier sessions, so Vagrant kept waiting on it. Four things stacked up:
+
+1. **A stuck VM.** An old `BashScripts_scriptbox_1790617170679_95804` was frozen in the **Stopping** state, which kept VirtualBox busy.
+2. **Five forgotten VMs.** The `Manual_provisioning_WinMacIntel` VMs (db01, mc01, rmq01, app01, web01) were still running in the background, using memory and CPU.
+3. **Leftover Vagrant processes.** Pressing `Ctrl+C` did not fully stop earlier runs. Two `ruby.exe` processes kept a lock on `scriptbox`, causing the "another process is already executing" error.
+4. **18 `VBoxHeadless.exe` processes** in Task Manager, the running VMs plus the stuck one.
+
+Vagrant and VirtualBox themselves were healthy: `vagrant --version` and `VBoxManage list vms` both answered immediately.
+
+## Solution
+
+Clear out every stuck process and VM, then start one VM on a clean slate:
+
+1. Kill leftover Vagrant processes: `taskkill //F //IM ruby.exe`
+2. Close VirtualBox Manager, then force-stop all VirtualBox processes (or restart Windows):
+
+```bash
+taskkill //F //IM VBoxHeadless.exe
+taskkill //F //IM VBoxNetDHCP.exe
+taskkill //F //IM VBoxSVC.exe
+```
+
+3. Reopen VirtualBox and delete both broken `BashScripts_scriptbox...` VMs (right-click → **Remove → Delete all files**).
+4. Start only the VM you need, without clicking in the terminal while it runs:
+
+```bash
+cd /c/DevOps/BashScripts
+vagrant up scriptbox
+```
+
+## Every step we took
+
+| # | What we did | Command or action | Result |
+| --- | --- | --- | --- |
+| 1 | Started the VM | `vagrant up` | No output, blank cursor |
+| 2 | Checked the project state | `vagrant status` | Also hung |
+| 3 | Checked Vagrant itself | `vagrant --version` | `Vagrant 2.4.9` instantly, so Vagrant was fine |
+| 4 | Tested VirtualBox directly | `"/c/Program Files/Oracle/VirtualBox/VBoxManage.exe" list vms` | Listed 9 VMs, so VirtualBox responded |
+| 5 | Checked which VMs were running | `VBoxManage.exe list runningvms` | 5 Manual_provisioning VMs running in the background |
+| 6 | Tried shutting those down and retried | `vagrant halt` in their folder / `vagrant status` | `vagrant status` hung again |
+| 7 | Retried `vagrant up` | `vagrant up` | Got further: status listed 4 VMs, then froze at "Setting the name of the VM" |
+| 8 | Tried to destroy and start one VM | `vagrant destroy -f`, `vagrant up scriptbox` | Lock error: another process already executing an action |
+| 9 | Killed leftover Vagrant processes | `taskkill //F //IM ruby.exe` | Killed 2 `ruby.exe` processes; `vagrant.exe` not found |
+| 10 | Destroyed and restarted scriptbox | `vagrant destroy -f`, `vagrant up scriptbox` | Destroy worked; up froze again at "Setting the name of the VM" |
+| 11 | Opened VirtualBox Manager | Visual check | Old scriptbox stuck in **Stopping**; 5 Manual_provisioning VMs **Running**; new scriptbox Powered Off |
+| 12 | Checked Task Manager (Details, filter `vbox`) | Visual check | 18 `VBoxHeadless.exe`, 3 `VBoxNetDHCP.exe`, `VBoxSVC.exe` running |
+| 13 | Force-stopped VirtualBox processes, deleted broken scriptbox VMs, ran `vagrant up scriptbox` | See Solution | **Fixed** |
+
+**Along the way:** a grey highlighted block kept appearing in the terminal. That is a text selection. In the Windows console, a selection can pause a running program, so avoid clicking inside the window while Vagrant runs.
+
+## Prevention and quick reference
+
+- Run `vagrant halt` in a project's folder when you finish with it, so VMs don't pile up in the background.
+- Check what's running before starting new VMs: `VBoxManage.exe list runningvms`.
+- Let `vagrant up` finish; don't press `Ctrl+C` mid-run or start a second `vagrant` command in parallel.
+- Don't click inside the terminal while Vagrant runs.
+- Watch for a hidden Windows permission prompt (`Alt+Tab`) when VirtualBox sets up networking.
+- If a Vagrantfile has several VMs, start one at a time: `vagrant up scriptbox`.
+
+| Task | Command (Git Bash) |
+| --- | --- |
+| List all VMs | `"/c/Program Files/Oracle/VirtualBox/VBoxManage.exe" list vms` |
+| List running VMs | `"/c/Program Files/Oracle/VirtualBox/VBoxManage.exe" list runningvms` |
+| Kill stuck Vagrant | `taskkill //F //IM ruby.exe` |
+| Kill stuck VMs | `taskkill //F //IM VBoxHeadless.exe` |
+| Stop VMs cleanly | `vagrant halt` |
+| Delete a project's VMs | `vagrant destroy -f` |
+| Debug a hang | `vagrant up scriptbox --debug > vagrant_debug.log 2>&1` |
