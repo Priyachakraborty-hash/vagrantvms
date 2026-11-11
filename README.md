@@ -1,1 +1,1 @@
-Vagrant command 
+Vagrant commands
